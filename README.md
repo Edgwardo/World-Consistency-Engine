@@ -1,192 +1,88 @@
-World-Consistency-Engine
+# World Consistency Engine
 
-A Java project made of two connected systems:
+A Java project with two connected systems:
 
-Turn-Based Battle Engine — a playable console RPG battle simulator.
-World Consistency Engine — a rule-based validator that checks whether a battle state is logically valid.
+- **Turn-Based Battle Engine** — a playable console RPG battle simulator.
+- **World Consistency Engine** — a rule-based validator that checks whether a battle state is logically legal under the rules of the system.
 
-The battle engine runs the game.
-The consistency engine analyzes snapshots of the game world and explains contradictions, impossible states, or illegal transitions.
+The battle engine runs the game. The consistency engine takes a snapshot of the world and determines whether that snapshot is possible — and if not, exactly which rules were broken.
 
-Overview
+---
 
-This repository explores a rules-driven combat system where battle logic and world validation are separated into different layers.
+## Why this project exists
 
-The battle engine handles turn order, combat actions, status effects, buffs, affinities, field effects, targeting, AI turns, and win/loss conditions. It is playable from the console through Main.java, which launches Game.java.
+This started as a self-guided reasoning project. The goal was to build a pure validation engine: given a world snapshot and a rule set, determine whether the world is logically possible. No gameplay, no combat simulation — just the reasoning layer.
 
-The World Consistency Engine does not run battles. Instead, it takes a WorldState snapshot and checks it against a set of explicit rules, returning whether the state is valid and listing any violations. It is designed to catch contradictions such as illegal status combinations, invalid revive usage, bad field durations, impossible buff stages, and incorrect transition outcomes.
+To make that useful, I also built the game world it is reasoning about. The battle engine provides real states to validate. The consistency engine is where the project's reasoning layer lives.
 
-Repository Structure
-Turn-Based Battle Engine
-Main.java
-Game.java
-Entity.java
-Move.java
-World Consistency Engine
-WorldState.java
-Rule.java
-ConsistencyEngine.java
-TestRunner.java
-Turn-Based Battle Engine
+The project is not mainly about shipping a game. It's about separating simulation from reasoning, and building a small system where the laws of the world are named, formalized, and machine-checkable.
 
-The battle engine is a console-based, player-oriented combat system. The program starts in Main.java, creates a Game object, and runs a full battle loop with retries, leader selection, and rematches.
+---
 
-Core features
-Cycle-based initiative recalculated after all living entities act, using effective SPD and deterministic tie-breaking.
-Player-controlled turns and simple enemy AI.
-Leader system where the player loses if their chosen leader dies, and leaders cannot be revived.
-Field system with RAIN, FIRE, and BLIZZARD, each affecting battle conditions differently. Rain refreshes WET, Fire refreshes BURNT, and Blizzard has a 35% freeze chance.
-Status system including BURNT, WET, FROZEN, PARALYZED, and POISONED.
-Buff/debuff stage system with values capped from -5 to +5, with timed duration decay.
-Affinity system with WEAK, RESIST, IMMUNE, and NEUTRAL, affecting both damage and status application.
-HP-cost and MP-cost moves, including actions that can KO the user if the HP cost is too high.
-Guard mechanic that halves the next incoming hit and blocks move-applied status effects.
-Readable combat pacing with built-in delays for turn flow and action results.
-File roles
-Main.java
+## State rules vs. transition rules
 
-Entry point for the playable game. It creates a scanner, prints the title, and starts the battle engine.
+The central design decision in this repo is the split between two kinds of rules:
 
-Move.java
+**State rules** evaluate a single snapshot.
+They answer: *"Can this configuration exist at all?"*
+Examples: WET + BURNT cannot coexist. A dead entity cannot be marked as the active turn-taker. Field duration cannot exceed its cap.
 
-Defines the combat move model:
+**Transition rules** evaluate a change from one state to another.
+They answer: *"Given what happened, is the new state legal?"*
+Examples: poison should deduct 12.5% of max HP at end of turn; WET + ELECTRIC interactions should produce the correct 1.5x damage multiplier when the transition is resolved.
 
-affinity types
-target modes
-cost types
-effect types
-stat and status enums
-move factory methods
-centralized move library
+Transition rules need more than a single snapshot — they need *before-state + action + after-state*. `WorldState.java` supports this with optional `beforeTurnHp`, `beforeActionHp`, `expectedDamageMultiplier`, and `baseDamageDealt` fields. When those fields are empty, transition rules are skipped. When populated, they're validated.
 
-The move library includes offensive skills, status-inflicting skills, buffs, debuffs, healing, revive, and multi-target attacks such as Tsunami and Sweep.
+The distinction matters because mixing them without labeling leads to blurred reasoning. State rules check possibility; transition rules check legality of change.
 
-Entity.java
+---
 
-Represents a battle unit. It stores:
+## What's in the repo
 
-identity and team alignment
-HP/MP
-base stats
-affinities
-skills
-active statuses
-buff stages and durations
-leader restrictions
-guard state
+### Turn-Based Battle Engine (`TurnBasedEngine/`)
 
-It also contains core behavior such as status application, buff application, cost spending, healing, effective stat calculation, and end-of-turn ticking for burn and poison damage.
+A fully playable console battle game. Run `Main.java` to play.
 
-Game.java
+- `Main.java` — entry point
+- `Move.java` — move model: affinity types, target modes, costs, effects, move library
+- `Entity.java` — battle unit with HP/MP, stats, affinities, statuses, buffs, leader state, guard
+- `Game.java` — the battle loop: setup, party/enemy generation, leader choice, turn order, field generation, target selection, enemy AI, move resolution, damage calculation, win/loss
 
-Implements the playable battle loop. It handles:
+Features:
 
-battle setup
-player party and enemy generation
-leader choice
-turn order
-field generation and persistence
-target selection
-enemy AI
-move resolution
-damage calculation
-win/loss conditions
-console UI flow
+- cycle-based initiative
+- field effects (FIRE / RAIN / BLIZZARD)
+- 5 statuses (BURNT / WET / FROZEN / PARALYZED / POISONED)
+- buff/debuff stages capped at `[-5, +5]`
+- affinity system (WEAK / RESIST / IMMUNE / NEUTRAL)
+- HP-cost and MP-cost moves
+- guard mechanic
+- status + affinity interaction multipliers (WET+ELECTRIC and FROZEN+FIRE both 1.5x)
 
-Damage is based on attacking stat, defender END, affinity multiplier, crit chance, and extra status-element interactions such as WET + ELECTRIC and FROZEN + FIRE, both of which increase damage by 1.5x.
+### World Consistency Engine (`WorldConsistencyEngine/`)
 
-World Consistency Engine
+A standalone validator for checking whether a battle-world snapshot is logically legal. Run `TestRunner.java` to execute all 10 test worlds and see the report.
 
-The World Consistency Engine is a separate validation layer. It checks whether a world snapshot is logically possible according to the rules of the battle system. Instead of simulating gameplay, it inspects states and transitions and reports violations by rule name.
+- `WorldState.java` — snapshot data structure. Self-contained; does not reference the battle engine. Mirrored enums for affinities, statuses, stats, fields, phases, costs. Supports both state and transition checks via optional before/after fields.
+- `Rule.java` — 15 implemented rules across 6 categories:
+  - **STATUS** (5): WET/BURNT mutual exclusion, FROZEN/BURNT mutual exclusion, poison tick correctness (transition), FROZEN entity cannot act, dead entity cannot act
+  - **AFFINITY** (2): IMMUNE blocks status infliction, status+affinity combo must apply 1.5x multiplier (transition)
+  - **FIELD** (3): only one active field, duration caps, active field status must apply to all non-immune entities
+  - **CLASS** (3): HP-cost move must deduct HP, MP-cost move requires sufficient MP, revive only valid on dead targets
+  - **RESOURCE** (1): HP/MP cannot exceed maximums
+  - **BUFF** (1): buff stages must be in `[-5, +5]`
+- `ConsistencyEngine.java` — runs all rules against a WorldState and returns a ValidationResult grouped by rule with human-readable violation messages.
+- `TestRunner.java` — 10 hand-crafted test worlds:
+  - **Valid** (W1, W2): well-formed states that should pass all rules
+  - **Obviously invalid** (W3, W4): multiple violations designed to be easy to detect
+  - **Subtly invalid** (W5, W6): single-rule violations that require careful reasoning
+  - **Transition-valid** (W7, W9): correct poison tick and correct 1.5x combo damage
+  - **Transition-invalid** (W8, W10): skipped poison damage, missing 1.5x multiplier
 
-Core features
-Standalone WorldState model that does not depend on the live game engine.
-Explicit rule objects with categories like STATUS, AFFINITY, FIELD, and CLASS.
-Validation results grouped by rule with human-readable violation messages.
-Support for both snapshot rules and transition-sensitive checks using before/after HP maps.
-Hand-authored test worlds covering valid, invalid, and subtle edge cases.
-File roles
-WorldState.java
+---
 
-Defines a complete battle snapshot for validation. It includes:
+## How to run
 
-mirrored enums for affinities, statuses, stats, fields, phases, and costs
-EntitySnapshot
-MoveSnapshot
-active entity/action/target metadata
-optional transition support such as beforeTurnHp, beforeActionHp, and baseDamageDealt
+Clone the repo, then:
 
-This lets the consistency engine evaluate both static impossibilities and some action-based legality checks.
-
-Rule.java
-
-Defines a rule as data plus a checker function. The rule set includes checks for:
-
-mutually exclusive statuses
-frozen/dead actors trying to act
-immunity blocking status infliction
-combo damage rules like WET + ELECTRIC
-field duration limits
-field-required statuses
-HP-cost and MP-cost move legality
-revive restrictions
-resource ceiling checks
-buff stage limits
-
-The file distinguishes between rules that can be validated from a single snapshot and rules that need before/after transition data.
-
-ConsistencyEngine.java
-
-Loads all rules, validates a WorldState, and returns a ValidationResult. It can validate a single world or a list of worlds and prints a formatted summary showing which worlds passed and which failed.
-
-TestRunner.java
-
-Builds handcrafted test worlds and runs them through the consistency engine. The suite includes:
-
-valid worlds
-obviously invalid worlds
-subtly invalid worlds
-transition-valid poison/combo cases
-transition-invalid poison/combo cases
-
-The main method runs ten worlds total and prints a full validation report.
-
-Design Idea
-
-This project separates simulation from reasoning.
-
-The battle engine answers: “What happens when players and enemies act?”
-The consistency engine answers: “Is this world state actually legal under the rules of the system?”
-
-That separation makes the project useful not just as a game prototype, but also as a logic and systems-design project focused on constraints, contradiction detection, and formal rule modeling.
-
-Example Battle Engine Mechanics
-Player party includes classes such as Warden, Priest, Raiju, Swamp, and Hero.
-Enemy parties are randomly generated from templates like Brute, Hexer, Stormling, and Frostbite.
-Some moves apply statuses, some buff allies, some debuff enemies, some heal, and some revive.
-Burn and poison tick only at the end of the acting entity’s turn.
-Example Consistency Rules
-WET and BURNT cannot coexist.
-FROZEN and BURNT cannot coexist.
-Dead entities cannot act.
-Revive cannot target an alive unit.
-Fire, Rain, and Blizzard have duration limits.
-Rain and Fire must apply their deterministic field statuses to all non-immune living entities.
-How to Run
-Run the battle engine
-
-Compile the game files and run Main:
-
-javac Main.java Game.java Entity.java Move.java
-java Main
-Run the consistency engine
-
-Compile the validator files and run TestRunner:
-
-javac WorldState.java Rule.java ConsistencyEngine.java TestRunner.java
-java TestRunner
-Why this project is interesting
-
-This repo is not just a turn-based game. It is also a small experiment in formal reasoning for games.
-
-It shows how a playable rules-driven combat engine can be paired with a validation engine that checks whether states and transitions obey the laws of the system. That makes it useful for debugging, testing, edge-case discovery, and thinking about game systems more rigorously.
+### Run the battle engine
